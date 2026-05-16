@@ -160,6 +160,165 @@ Uses **MessagePack** binary framing over Erlang Ports — audio is transmitted a
 
 - Initial release: Voice Cloning, Voice Design, multilingual TTS, 24kHz WAV, MessagePack protocol
 
+## Production & Engineering
+
+This section provides practical guidance for using OmnivoiceEx in real systems: concurrency, reliability, monitoring, and common pitfalls.
+
+### Concurrency and Request Handling
+
+- The Python bridge is a single process behind one GenServer. Generation calls are executed serially inside the model; concurrent `generate/3` requests are queued internally.
+- Recommended patterns:
+  - Use a **single server per node** in most cases:
+    - Start once at application startup, share it via a named GenServer or Supervisor.
+  - For high-load clusters:
+    - Run one OmnivoiceEx instance per GPU (or per model replica).
+    - Distribute requests across nodes using a load balancer or job queue.
+
+Example: named server in supervision tree
+
+```elixir
+defmodule MyApp.OmniVoiceSupervisor do
+  use Supervisor
+
+  def start_link(opts) do
+    Supervisor.start_link(__MODULE__, opts, name: __MODULE__)
+  end
+
+  def init(_opts) do
+    children = [
+      {OmnivoiceEx,
+       name: OmniVoiceServer,
+       device: System.get_env("OMNIVOICE_DEVICE") || "cuda",
+       model: System.get_env("OMNIVOICE_MODEL") || "k2-fsa/OmniVoice"}]
+
+    Supervisor.init(children, strategy: :one_for_one)
+  end
+end
+
+# Usage elsewhere:
+{:ok, audio} = OmnivoiceEx.generate(OmniVoiceServer, "Hello!", seed: 1)
+```
+
+### Timeouts and Backpressure
+
+- `generate/3` and `await_ready/2` accept a `timeout` argument.
+- In production:
+  - Never use unlimited timeouts in HTTP handlers or worker loops.
+  - Use per-request timeouts (e.g., 30–120s depending on length) so long-running or stuck generations do not freeze processes.
+
+Example:
+
+```elixir
+case OmnivoiceEx.generate(OmniVoiceServer, text, opts, timeout: 60_000) do
+  {:ok, audio} ->
+    # handle audio
+  {:error, :timeout} ->
+    # fallback / retry / user message
+  {:error, reason} ->
+    # log and handle
+end
+```
+
+If your system is under heavy load:
+
+- Consider a worker pool (e.g., Quantum, Oban) to isolate TTS jobs.
+- Use backoff + limited retries instead of aggressive parallel attempts on the same server.
+
+### Error Handling
+
+OmnivoiceEx can return errors from:
+
+- Model failures / OOM
+- Invalid inputs
+- Bridge crashes
+
+General pattern:
+
+```elixir
+case OmnivoiceEx.generate(OmniVoiceServer, text, opts) do
+  {:ok, audio} ->
+    # success
+
+  {:error, :timeout} ->
+    Logger.warn("TTS request timed out")
+
+  {:error, msg} when is_binary(msg) ->
+    Logger.error("TTS bridge error: #{msg}")
+
+  {:error, other} ->
+    Logger.error("TTS unexpected error: #{inspect(other)}")
+end
+```
+
+If the Python bridge process exits unexpectedly:
+
+- The GenServer will transition to an error status.
+- In production, wrap OmnivoiceEx in a Supervisor with `restart: :transient` or `:permanent` depending on your policy.
+
+### Telemetry and Monitoring
+
+OmnivoiceEx emits telemetry events you can use for observability:
+
+- `[:omnivoice_ex, :generate]`:
+  - Measured: `%{duration_ms: float()}` — time to generate audio.
+- `[:omnivoice_ex, :await_ready]`:
+  - Measured: model load duration.
+
+Example: attach a handler in your application:
+
+```elixir
+defmodule MyApp do
+  def start(_type, _args) do
+    children = [
+      MyApp.OmniVoiceSupervisor,
+      {TelemetryPoller, []}
+    ]
+
+    Supervisor.start_link(children, strategy: :one_for_one)
+
+    :telemetry.attach_many(
+      "omnivoice-ex-logger",
+      [
+        [:omnivoice_ex, :generate],
+        [:omnivoice_ex, :await_ready]
+      ],
+      &__MODULE__.handle_event/4,
+      nil
+    )
+  end
+
+  def handle_event(event, measurements, _meta, _config) do
+    Logger.debug(
+      "OmnivoiceEx #{inspect(event)} duration_ms=#{measurements.duration_ms}"
+    )
+  end
+end
+```
+
+You can plug this into Prometheus, Grafana, or your internal metrics stack.
+
+### Deployment Notes
+
+- Python environment:
+  - Run `mix omnivoice_ex.setup` in your build / deploy step to install required pip packages.
+  - Ensure the same Python interpreter is available at runtime as during setup.
+- GPU:
+  - Use a dedicated container or VM with stable GPU drivers and sufficient memory.
+  - Avoid overcommitting GPUs; OmniVoice + large context can use several GBs of VRAM.
+- Determinism in production:
+  - For content pipelines where you must be able to reproduce outputs (e.g., logs, audits), always pass a `seed` and keep temperatures at 0.
+
+### Common Pitfalls (FAQ-style)
+
+- “Why is startup slow?”
+  - The model loads into memory on first start. This is expected; use `await_ready/2` with a generous timeout and cache the server instead of restarting it frequently.
+- “Why are concurrent requests blocking each other?”
+  - The Python bridge processes one request at a time. For high concurrency, deploy multiple instances (e.g., one per GPU) and load-balance between them.
+- “Audio sounds different across runs.”
+  - If you need stable output, set `seed`, `position_temperature: 0.0`, `class_temperature: 0.0`. Without these, outputs may vary due to stochastic sampling.
+- “Language detection seems random for mixed-language text.”
+  - Set `language` explicitly (e.g., `"zh"` or `"en"`) when mixing languages in the same prompt.
+
 ## License
 
 Apache 2.0 — see [LICENSE](LICENSE).

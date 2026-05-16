@@ -66,6 +66,9 @@ defmodule OmnivoiceEx do
           | {:speed, float()}
           | {:num_step, pos_integer()}
           | {:guidance_scale, float()}
+          | {:seed, non_neg_integer()}
+          | {:position_temperature, float()}
+          | {:class_temperature, float()}
 
   # ---------------------------------------------------------------------------
   # Lifecycle
@@ -110,11 +113,18 @@ defmodule OmnivoiceEx do
     * `:ref_audio` — Path to reference audio for voice cloning
     * `:ref_text` — Transcript of reference audio (improves clone quality)
     * `:instruct` — Voice instruction for design (e.g. "A warm female broadcaster")
-    * `:language` — Language code hint (auto-detected if omitted)
+    * `:language` — OmniVoice language ID (e.g. `"zh"`, `"en"`, `"ja"`, `"ko"`, `"yue"`). Auto-detected from text if omitted. For mixed-language content, set this explicitly to avoid unstable detection.
+
+  Common IDs: `zh` (Chinese), `en` (English), `ja` (Japanese), `ko` (Korean), `yue` (Cantonese), `fr` (French), `de` (German), `es` (Spanish), `ru` (Russian), `pt` (Portuguese), `it` (Italian), `th` (Thai), `vi` (Vietnamese), `hi` (Hindi), `ar` (Arabic), `nl` (Dutch), `pl` (Polish), `sv` (Swedish), `tr` (Turkish).
+
+  Full list of 646 languages: [OmniVoice docs/languages.md](https://github.com/k2-fsa/OmniVoice/blob/master/docs/languages.md)
     * `:duration` — Target duration in seconds
     * `:speed` — Playback speed factor
     * `:num_step` — Diffusion steps (higher = better quality, slower). Default: `32`
     * `:guidance_scale` — Classifier-free guidance. Default: `2.0`
+    * `:seed` — Random seed for reproducible generation. Default: `42`.
+    * `:position_temperature` — Mask-position selection temperature. `0` = greedy (deterministic). Default: `0.0`.
+    * `:class_temperature` — Token sampling temperature. `0` = greedy (deterministic). Default: `0.0`.
 
   ## Examples
 

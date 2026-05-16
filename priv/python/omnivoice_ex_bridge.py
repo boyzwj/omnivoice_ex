@@ -14,6 +14,10 @@ import os
 import struct
 import signal
 
+# Required for deterministic CuBLAS (CUDA >= 10.2).
+# Must be set before any torch import / operation.
+os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
+
 import msgpack
 import numpy as np
 import soundfile as sf
@@ -174,6 +178,27 @@ class OmniVoiceBridge:
             guidance_scale = msg.get("guidance_scale", 2.0)
             gen_kwargs["num_step"] = num_step
             gen_kwargs["guidance_scale"] = guidance_scale
+
+            # Seed all RNGs for deterministic generation
+            seed = msg.get("seed", 42)
+            if seed is not None:
+                torch.manual_seed(seed)
+                torch.cuda.manual_seed_all(seed)
+                np.random.seed(seed)
+
+                # Force deterministic CUDA algorithms to eliminate GPU-level
+                # non-determinism (flash attention atomics, cuDNN algorithm
+                # selection, scatter ops, etc.)
+                torch.backends.cudnn.deterministic = True
+                torch.backends.cudnn.benchmark = False
+                try:
+                    torch.use_deterministic_algorithms(True)
+                except Exception:
+                    pass  # some ops lack deterministic impl; best effort
+
+            # Sampling temperatures — 0 = greedy/deterministic
+            gen_kwargs["position_temperature"] = msg.get("position_temperature", 0.0)
+            gen_kwargs["class_temperature"] = msg.get("class_temperature", 0.0)
 
             audio_list = self.model.generate(text, **gen_kwargs)
             wav = audio_list[0]  # First (and usually only) output

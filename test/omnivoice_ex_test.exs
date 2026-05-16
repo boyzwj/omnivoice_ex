@@ -5,7 +5,8 @@ defmodule OmnivoiceExTest do
   describe "save/2" do
     test "writes audio bytes to file" do
       path = "/tmp/omnivoice_ex_test_delete_me.wav"
-      audio = <<82, 73, 70, 70, 0, 0, 0, 0, 87, 65, 86, 69>>  # Minimal WAV header
+      # Minimal WAV header
+      audio = <<82, 73, 70, 70, 0, 0, 0, 0, 87, 65, 86, 69>>
       assert :ok = OmnivoiceEx.save(audio, path)
       assert File.exists?(path)
       File.rm!(path)

@@ -36,6 +36,9 @@ defmodule OmnivoiceEx.Server do
           | {:speed, float()}
           | {:num_step, pos_integer()}
           | {:guidance_scale, float()}
+          | {:seed, non_neg_integer()}
+          | {:position_temperature, float()}
+          | {:class_temperature, float()}
 
   @default_model "k2-fsa/OmniVoice"
   @default_device "cuda"
@@ -115,7 +118,6 @@ defmodule OmnivoiceEx.Server do
           :binary,
           :use_stdio,
           :exit_status,
-          :stderr_to_stdout,
           args: ["-u", bridge_path]
         ])
 
@@ -315,6 +317,9 @@ defmodule OmnivoiceEx.Server do
       {:speed, v} -> {"speed", v}
       {:num_step, v} -> {"num_step", v}
       {:guidance_scale, v} -> {"guidance_scale", v}
+      {:seed, v} -> {"seed", v}
+      {:position_temperature, v} -> {"position_temperature", v}
+      {:class_temperature, v} -> {"class_temperature", v}
     end)
     |> Map.new()
   end
